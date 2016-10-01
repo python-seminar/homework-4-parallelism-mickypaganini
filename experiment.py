@@ -1,6 +1,8 @@
 from darts import pidarts
 import numpy as np
 
+N_POINTS = 14
+
 def main(methods, repeat):
     d = {}
     for method in methods:
@@ -14,6 +16,14 @@ def main(methods, repeat):
         if 'concurrent' in methods:
             d['concurrent'].update(
                 {trial : concurrent_darts()}
+            )
+        if 'joblib' in methods:
+            d['joblib'].update(
+                {trial : joblib_darts()}
+            )
+        if 'multiprocessing' in methods:
+            d['multiprocessing'].update(
+                {trial : multiprocessing_darts()}
             )
         if 'simple' in methods:
             d['simple'].update(
@@ -29,24 +39,42 @@ def main(methods, repeat):
 # -----------------------------------------------
 
 def dask_darts():
-    from dask.distributed import Executor, progress
-    e = Executor(set_as_default=True)
-    futures = [e.submit(pidarts, num) for num in np.logspace(1, 7, 14)]
-    d = {}
-    _ = [d.update(f.result()) for f in futures]
-    return d
+   import dask.array as da
+   x = da.from_array(np.logspace(1, 7, N_POINTS), (1, ))
+   lazy_pidarts = x.map_blocks(pidarts)
+   d = {}
+   _ = [d.update(r) for r in lazy_pidarts.compute()]
+   return d
 
 def concurrent_darts():
     from concurrent.futures import ProcessPoolExecutor
     e = ProcessPoolExecutor()
-    results = list(e.map(pidarts, np.logspace(1, 7, 14)))
+    results = list(e.map(pidarts, np.logspace(1, 7, N_POINTS)))
+    d = {}
+    _ = [d.update(r) for r in results]
+    e.shutdown()
+    return d
+
+def joblib_darts():
+    from joblib import Parallel, delayed
+    results = Parallel(n_jobs=10, verbose=5, backend="threading") \
+        (delayed(pidarts)(i) for i in np.logspace(1, 7, N_POINTS))
+    d = {}
+    _ = [d.update(r) for r in results]
+    return d
+
+def multiprocessing_darts():
+    from multiprocessing import Pool 
+    pool = Pool(processes=4) 
+    results = list(pool.map(pidarts, np.logspace(1, 7, N_POINTS)))
+    pool.close()
     d = {}
     _ = [d.update(r) for r in results]
     return d
 
 def simple_darts():
     d = {}
-    _ = [d.update(pidarts(number_of_darts)) for number_of_darts in np.logspace(1, 7, 14)]
+    _ = [d.update(pidarts(number_of_darts)) for number_of_darts in np.logspace(1, 7, N_POINTS)]
     return d
 
 # -----------------------------------------------
@@ -58,7 +86,7 @@ def plot(d, orig_methods, orig_trials):
     assert trials == orig_trials
     import matplotlib.pyplot as plt
     x = d[methods[0]].values()[0].keys()
-    color = iter(['red', 'blue', 'green'])#(plt.cm.jet(np.linspace(0, 1, len(methods))))
+    color = iter(['red', 'blue', 'green', 'magenta', 'orange'])#(plt.cm.jet(np.linspace(0, 1, len(methods))))
     fig, ax1 = plt.subplots()
     ax1.set_xlabel('Darts Thrown')
     ax1.set_ylabel('Execution Time (seconds), solid line')
@@ -107,9 +135,9 @@ def check_args(methods):
     Check if methods are valid
     """
     for method in methods:
-        if method not in ['dask', 'concurrent', 'simple']:
+        if method not in ['dask', 'concurrent', 'simple', 'multiprocessing', 'joblib']:
             raise ValueError("Invalid method: {}. \
-                Available options: 'dask', 'concurrent', 'simple'".format(method))
+                Available options: 'dask', 'concurrent', 'simple', 'multiprocessing', 'joblib'".format(method))
 
 # -----------------------------------------------    
 
@@ -119,9 +147,9 @@ if __name__ == '__main__':
     # -- read in arguments
     parser = argparse.ArgumentParser()
     parser.add_argument('--methods',
-        help="Select any among 'dask', 'concurrent', 'simple'",
+        help="Select any among 'dask', 'concurrent', 'simple', 'multiprocessing', 'joblib'",
         nargs="+", 
-        default=['dask', 'concurrent', 'simple'])
+        default=['simple'])
     parser.add_argument('--repeat',
         type=int,
         help="int, number of times you want to repeat the simulation",
